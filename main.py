@@ -1,4 +1,3 @@
-import json
 import logging
 from flask import Flask, request, jsonify
 from scrap import Crls
@@ -9,7 +8,6 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 
 app = Flask(__name__)
-
 
 # Setup logging
 logging.basicConfig(
@@ -42,11 +40,51 @@ class EconomicIndicator(Base):
     frequency = Column(CHAR(6))
     created_at = Column(DateTime, default=datetime.utcnow)
 
-Base.metadata.create_all(engine)
+class EconomicData(Base):
+    __tablename__ = 'economic_data'
 
-def scrape_indicators():
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    commitments = Column(String)
+    date = Column(Date)
+    non_commercial_long = Column(Integer)
+    non_commercial_short = Column(Integer)
+    non_commercial_spreads = Column(Integer)
+    non_commercial_changes_long = Column(Integer)
+    non_commercial_changes_short = Column(Integer)
+    non_commercial_changes_spreads = Column(Integer)
+    non_commercial_percent_open_interest_long = Column(String(10))
+    non_commercial_percent_open_interest_short = Column(String(10))
+    non_commercial_percent_open_interest_spreads = Column(String(10))
+    non_commercial_number_of_traders_long = Column(Integer)
+    non_commercial_number_of_traders_short = Column(Integer)
+    non_commercial_number_of_traders_spreads = Column(Integer)
+    commercial_long = Column(Integer)
+    commercial_short = Column(Integer)
+    commercial_changes_long = Column(Integer)
+    commercial_changes_short = Column(Integer)
+    commercial_percent_open_interest_long = Column(String(10))
+    commercial_percent_open_interest_short = Column(String(10))
+    commercial_number_of_traders_long = Column(Integer)
+    commercial_number_of_traders_short = Column(Integer)
+    total_long = Column(Integer)
+    total_short = Column(Integer)
+    total_changes_long = Column(Integer)
+    total_changes_short = Column(Integer)
+    total_percent_open_interest_long = Column(String(10))
+    total_percent_open_interest_short = Column(String(10))
+    total_number_of_traders = Column(Integer)
+    non_reportable_long = Column(Integer)
+    non_reportable_short = Column(Integer)
+    non_reportable_changes_long = Column(Integer)
+    non_reportable_changes_short = Column(Integer)
+    non_reportable_percent_open_interest_long = Column(String(10))
+    non_reportable_percent_open_interest_short = Column(String(10))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+def scrapp_automated():
     countries = [
-        'euro-area', 'united-kingdom', 'canada', 'australia', 'new-zaeland', 
+        'euro-area', 'united-kingdom', 'canada', 'australia', 'new-zealand', 
         'japan', 'switzerland', 'china', 'united-states'
     ]
     for country in countries:
@@ -85,6 +123,8 @@ def scrape_indicators():
                     frequency=frequency
                 )
                 insert_indicator_if_not_exists(indicator_data=econ_ind)
+    #Cot
+    cot_cron()
 
 def insert_indicator_if_not_exists(indicator_data):
     # Check if indicator with the same combination of country, indicator_type, and indicator exists
@@ -103,6 +143,20 @@ def insert_indicator_if_not_exists(indicator_data):
     else:
         logging.info(f"Indicator for {indicator_data.country} - {indicator_data.indicator} already exists")
 
+def insert_data_economic_if_not_exist(economic_data):
+    existing_cot = session.query(EconomicData).filter(
+        EconomicData.date == economic_data.date,
+        EconomicData.commitments == economic_data.commitments
+    ).first()
+
+    if not existing_cot:
+        # Insert new indicator if not exists
+        session.add(economic_data)
+        session.commit()
+        logging.info(f"Inserted new cot for {economic_data.commitments} - {economic_data.date}")
+    else:
+        logging.info(f"Cot for {economic_data.commitments} - {economic_data.date} already exists")
+
 @app.route('/api/heatmap', methods=['GET'])
 def heat_map_endpoint():
     crls = Crls('https://tradingeconomics.com/matrix')
@@ -114,6 +168,65 @@ def indicator_endpoint(country):
     crls = Crls(f'https://tradingeconomics.com/{country}/indicators')
     resp = crls.indicator()
     return jsonify(resp)
+
+@app.route('/api/cot-cron')
+def cot_cron():
+    paths = [
+        '090741', '092741', '096742', '099741', '232741', 
+        '097741', '112741', '098662', '088691', '133741'
+    ]
+
+    url = "https://tradingster.com/cot/legacy-futures"
+    parent = "div"
+    child = "table"
+    selector = "table-responsive"
+
+    for path in paths:
+        crls = Crls(f'{url}/{path}')
+        json_data = crls.cot(parent, child, selector)
+        #print(json_data)
+        economic_data = EconomicData(
+            commitments = json_data['commitments'],
+            date = json_data['date'],
+            non_commercial_long= json_data['non_commercial']['long'],
+            non_commercial_short= json_data['non_commercial']['short'],
+            non_commercial_spreads= json_data['non_commercial']['spreads'],
+            non_commercial_changes_long= json_data['non_commercial']['changes']['long'],
+            non_commercial_changes_short= json_data['non_commercial']['changes']['short'],
+            non_commercial_changes_spreads= json_data['non_commercial']['changes']['spreads'],
+            non_commercial_percent_open_interest_long= json_data['non_commercial']['percent_open_interest']['long'],
+            non_commercial_percent_open_interest_short= json_data['non_commercial']['percent_open_interest']['short'],
+            non_commercial_percent_open_interest_spreads= json_data['non_commercial']['percent_open_interest']['spreads'],
+            non_commercial_number_of_traders_long= json_data['non_commercial']['number_of_traders']['long'],
+            non_commercial_number_of_traders_short= json_data['non_commercial']['number_of_traders']['short'],
+            non_commercial_number_of_traders_spreads= json_data['non_commercial']['number_of_traders']['spreads'],
+            commercial_long= json_data['commercial']['long'],
+            commercial_short= json_data['commercial']['short'],
+            commercial_changes_long= json_data['commercial']['changes']['long'],
+            commercial_changes_short= json_data['commercial']['changes']['short'],
+            commercial_percent_open_interest_long= json_data['commercial']['percent_open_interest']['long'],
+            commercial_percent_open_interest_short= json_data['commercial']['percent_open_interest']['short'],
+            commercial_number_of_traders_long= json_data['commercial']['number_of_traders']['long'],
+            commercial_number_of_traders_short= json_data['commercial']['number_of_traders']['short'],
+            total_long= json_data['total']['long'],
+            total_short= json_data['total']['short'],
+            total_changes_long= json_data['total']['changes']['long'],
+            total_changes_short= json_data['total']['changes']['short'],
+            total_percent_open_interest_long= json_data['total']['percent_open_interest']['long'],
+            total_percent_open_interest_short= json_data['total']['percent_open_interest']['short'],
+            total_number_of_traders= json_data['total']['number_of_traders'],
+            non_reportable_long= json_data['non_reportable']['long'],
+            non_reportable_short= json_data['non_reportable']['short'],
+            non_reportable_changes_long= json_data['non_reportable']['changes']['long'],
+            non_reportable_changes_short= json_data['non_reportable']['changes']['short'],
+            non_reportable_percent_open_interest_long= json_data['non_reportable']['percent_open_interest']['long'],
+            non_reportable_percent_open_interest_short= json_data['non_reportable']['percent_open_interest']['short'],
+            created_at = datetime.now()
+        )
+        insert_data_economic_if_not_exist(economic_data=economic_data)
+    return jsonify({"message": "Successfully executed"}), 200
+
+
     
 @app.route('/api/cot', methods=['GET'])
 def cot_endpoint():
@@ -137,7 +250,7 @@ def cot_endpoint():
 if __name__ == '__main__':
     # Setup the scheduler
     scheduler = BackgroundScheduler()
-    scheduler.add_job(scrape_indicators, 'cron', hour=1, minute=14)
+    scheduler.add_job(scrapp_automated, 'cron', hour=1, minute=14)
     scheduler.start()
 
     try:
