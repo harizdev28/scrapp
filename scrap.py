@@ -78,7 +78,6 @@ class Crls:
         json_data = tabs_data
         return json_data
 
-
     def cot(self, parent_tag, child_tag, attrs):
         ua = UserAgent()
         ua_rand = ua.random
@@ -86,43 +85,151 @@ class Crls:
         response = requests.get(self.link, headers=headers)
 
         if response.status_code != 200:
-            return None, None
+            return {"error": "Failed to fetch the URL"}
         
         page_content = response.text
         soup = bs4(page_content, "html.parser")
+
+         # Extract data from the webpage using BeautifulSoup
+        strong_tag1 = soup.select_one("div:nth-of-type(1) > div:nth-of-type(1) > strong:nth-of-type(1)")
+        commitments = strong_tag1.text if strong_tag1 else "N/A"
+
+        strong_tag2 = soup.select_one("div:nth-of-type(1) > div:nth-of-type(2) > div > strong")
+        date = strong_tag2.text.split(": ")[1] if strong_tag2 else "N/A"
+
         parent_element = soup.find(parent_tag, attrs=attrs)
         
         if not parent_element:
-            return None, None
+            return {"error": "Parent element not found"}
         
-        child_element = parent_element.find(child_tag)
-        
+        child_element = parent_element.find(child_tag)  # This contains the table
+
         if not child_element:
-            return None, None
+            return {"error": "Child element not found"}
 
-        # Extracting table headers
-        headers = []
-        for th in child_element.find_all("th"):
-            headers.append(th.text.strip())
+        # Extract and return data as JSON
+        data = self.extract_data(child_element)
+        data['commitments'] = commitments
+        data['date'] = date
+        return data
 
-        # Extracting table rows
-        table_data = []
-        for tr in child_element.find_all("tr")[1:]:
-            td_tags = tr.find_all("td")
-            td_values = [td.text.strip() for td in td_tags]
-            table_data.append(td_values)
+    def get_number(self, td):
+        text = td.get_text(strip=True)
+        if text.startswith('(') and text.endswith(')'):
+            return int(text[1:-1].replace(',', ''))
+        elif text.startswith('-'):
+            return int(text.replace(',', ''))
+        elif text.startswith('+'):
+            return int(text[1:].replace(',', ''))
+        else:
+            return int(text.replace(',', ''))
 
-        return headers, table_data
+    def get_percent(self, td):
+        return td.get_text(strip=True)
 
-    def to_json(self, headers, data):
-        # Create a list of dictionaries
-        table_json = []
-        for row in data:
-            row_dict = {}
-            for i in range(len(row)):
-                # Only add to the dictionary if headers and row lengths match
-                if i < len(headers):
-                    row_dict[headers[i]] = row[i]
-            table_json.append(row_dict)
-        
-        return table_json
+    def extract_data(self, child_element):
+        data = {}
+        rows = child_element.select('tbody tr')
+
+        def safe_get_number(td):
+            try:
+                return self.get_number(td)
+            except (IndexError, AttributeError, ValueError):
+                return None
+
+        def safe_get_percent(td):
+            try:
+                return self.get_percent(td)
+            except (IndexError, AttributeError):
+                return None
+
+        if len(rows) < 8:
+            return {"error": "Unexpected table structure"}
+
+        # Open Interest and Change in Open Interest
+        open_interest_row = rows[0].select('td')
+        change_interest_row = rows[2].select('td')
+        if len(open_interest_row) > 5 and len(change_interest_row) > 5:
+            data['open_interest'] = safe_get_number(open_interest_row[5].find('span'))
+            data['change_in_open_interest'] = safe_get_number(change_interest_row[5].find('span'))
+
+        # Non-Commercial Data
+        non_commercial_row = rows[1].select('td')
+        non_commercial_changes_row = rows[3].select('td')
+        non_commercial_percent_row = rows[5].select('td')
+        non_commercial_traders_row = rows[7].select('td')
+
+        data['non_commercial'] = {
+            'long': safe_get_number(non_commercial_row[0]),
+            'short': safe_get_number(non_commercial_row[1]),
+            'spreads': safe_get_number(non_commercial_row[2]),
+            'changes': {
+                'long': safe_get_number(non_commercial_changes_row[0]),
+                'short': safe_get_number(non_commercial_changes_row[1]),
+                'spreads': safe_get_number(non_commercial_changes_row[2])
+            },
+            'percent_open_interest': {
+                'long': safe_get_percent(non_commercial_percent_row[0]),
+                'short': safe_get_percent(non_commercial_percent_row[1]),
+                'spreads': safe_get_percent(non_commercial_percent_row[2])
+            },
+            'number_of_traders': {
+                'long': safe_get_number(non_commercial_traders_row[0]),
+                'short': safe_get_number(non_commercial_traders_row[1]),
+                'spreads': safe_get_number(non_commercial_traders_row[2])
+            }
+        }
+
+        # Commercial Data
+        data['commercial'] = {
+            'long': safe_get_number(non_commercial_row[3]),
+            'short': safe_get_number(non_commercial_row[4]),
+            'changes': {
+                'long': safe_get_number(non_commercial_changes_row[3]),
+                'short': safe_get_number(non_commercial_changes_row[4])
+            },
+            'percent_open_interest': {
+                'long': safe_get_percent(non_commercial_percent_row[3]),
+                'short': safe_get_percent(non_commercial_percent_row[4])
+            },
+            'number_of_traders': {
+                'long': safe_get_number(non_commercial_traders_row[3]),
+                'short': safe_get_number(non_commercial_traders_row[4])
+            }
+        }
+
+        # Total Data
+        total_row = rows[1].select('td')
+        total_changes_row = rows[3].select('td')
+        total_percent_row = rows[5].select('td')
+        total_traders_row = rows[6].select('td')
+
+        data['total'] = {
+            'long': safe_get_number(total_row[5]),
+            'short': safe_get_number(total_row[6]),
+            'changes': {
+                'long': safe_get_number(total_changes_row[5]),
+                'short': safe_get_number(total_changes_row[6])
+            },
+            'percent_open_interest': {
+                'long': safe_get_percent(total_percent_row[5]),
+                'short': safe_get_percent(total_percent_row[6])
+            },
+            'number_of_traders': safe_get_number(total_traders_row[1].find('span'))
+        }
+
+        # Non-Reportable Data
+        data['non_reportable'] = {
+            'long': safe_get_number(non_commercial_row[7]),
+            'short': safe_get_number(non_commercial_row[8]),
+            'changes': {
+                'long': safe_get_number(non_commercial_changes_row[7]),
+                'short': safe_get_number(non_commercial_changes_row[8])
+            },
+            'percent_open_interest': {
+                'long': safe_get_percent(non_commercial_percent_row[7]),
+                'short': safe_get_percent(non_commercial_percent_row[8])
+            }
+        }
+
+        return data
